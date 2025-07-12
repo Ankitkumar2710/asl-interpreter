@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Sign Language Interpreter</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@1.0.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.2/dist/knn-classifier.min.js"></script>
+    <style>
+        :root {
+            --primary: #4285f4;
+            --secondary: #34a853;
+            --error: #ea4335;
+            --background: #f8f9fa;
+            --text: #202124;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            color: var(--text);
+            background-color: var(--background);
+        }
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h1 {
+            color: var(--primary);
+            margin-bottom: 10px;
+        }
+        .app-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 768px) {
+            .app-container {
+                grid-template-columns: 1fr;
+            }
+        }
+        #video-container {
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        #video {
+            width: 100%;
+            display: block;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+        .control-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .output-section {
+            margin-top: 20px;
+        }
+        #output {
+            font-size: 28px;
+            min-height: 60px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        #history {
+            max-height: 200px;
+            overflow-y: auto;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+            transition: all 0.2s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        button:hover {
+            background: #3367d6;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin: 15px 0;
+        }
+        .button-danger {
+            background: var(--error);
+        }
+        .button-success {
+            background: var(--secondary);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            text-align: center;
+        }
+        .status.loading {
+            background: #fff8e1;
+            color: #ff8f00;
+        }
+        .status.error {
+            background: #ffebee;
+            color: var(--error);
+        }
+        .status.success {
+            background: #e8f5e9;
+            color: var(--secondary);
+        }
+        .settings {
+            margin: 20px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .settings h3 {
+            margin-top: 0;
+        }
+        .settings label {
+            display: block;
+            margin: 10px 0;
+        }
+        .settings select, .settings input {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .training-section {
+            margin-top: 20px;
+        }
+        .landmark-info {
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Advanced Sign Language Interpreter</h1>
+        <p>Real-time ASL alphabet recognition using your webcam</p>
+    </header>
+    
+    <div class="app-container">
+        <div id="video-container">
+            <video id="video" width="640" height="480" autoplay playsinline></video>
+            <canvas id="canvas" width="640" height="480"></canvas>
+        </div>
+        
+        <div class="control-panel">
+            <div class="status loading" id="status">Loading models...</div>
+            
+            <div class="button-group">
+                <button id="startBtn">Start Camera</button>
+                <button id="clearBtn" disabled>Clear</button>
+                <button id="saveBtn" disabled>Save Word</button>
+            </div>
+            
+            <div class="output-section">
+                <div id="output">Detected letters will appear here</div>
+                <div id="history"></div>
+            </div>
+            
+            <div class="settings">
+                <h3>Settings</h3>
+                <label>
+                    Detection Mode:
+                    <select id="modeSelect">
+                        <option value="letters">Individual Letters</option>
+                        <option value="words">Complete Words</option>
+                    </select>
+                </label>
+                <label>
+                    Confidence Threshold:
+                    <input type="range" id="confidenceSlider" min="0.5" max="1" step="0.05" value="0.8">
+                    <span id="confidenceValue">0.8</span>
+                </label>
+            </div>
+            
+            <div class="training-section">
+                <h3>Model Training (Advanced)</h3>
+                <p>Improve recognition by training with your own signs</p>
+                <div class="button-group">
+                    <button id="trainBtn" disabled>Train New Sign</button>
+                    <button id="resetBtn" disabled>Reset Model</button>
+                </div>
+                <div id="trainingControls" style="display: none;">
+                    <input type="text" id="signName" placeholder="Enter sign name (e.g., 'A')">
+                    <button id="captureBtn">Capture Sample</button>
+                    <div id="sampleCount">Samples: 0</div>
+                </div>
+            </div>
+            
+            <div class="landmark-info">
+                <p>Landmarks detected: <span id="landmarkCount">0</span></p>
+                <p>FPS: <span id="fpsCounter">0</span></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const output = document.getElementById('output');
+        const history = document.getElementById('history');
+        const startBtn = document.getElementById('startBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const trainBtn = document.getElementById('trainBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const captureBtn = document.getElementById('captureBtn');
+        const trainingControls = document.getElementById('trainingControls');
+        const signName = document.getElementById('signName');
+        const sampleCount = document.getElementById('sampleCount');
+        const status = document.getElementById('status');
+        const modeSelect = document.getElementById('modeSelect');
+        const confidenceSlider = document.getElementById('confidenceSlider');
+        const confidenceValue = document.getElementById('confidenceValue');
+        const landmarkCount = document.getElementById('landmarkCount');
+        const fpsCounter = document.getElementById('fpsCounter');
+
+        // App state
+        let detector;
+        let classifier;
+        let isRunning = false;
+        let animationFrame;
+        let lastDetection = '';
+        let currentWord = '';
+        let detectedLetters = [];
+        let trainingSamples = {};
+        let fps = 0;
+        let lastFpsUpdate = 0;
+        let frameCount = 0;
+        let confidenceThreshold = 0.8;
+        
+        // ASL alphabet reference (simplified)
+        const ASL_ALPHABET = {
+            'A': 'A - Fist with thumb to side',
+            'B': 'B - Flat hand, palm out',
+            'C': 'C - Curved hand like a C',
+            'D': 'D - Pointing finger up, others in fist',
+            'E': 'E - Fingers curled, thumb across',
+            'F': 'F - OK sign with thumb and index',
+            'G': 'G - Pointing finger sideways',
+            'H': 'H - Two fingers pointing sideways',
+            'I': 'I - Pinky up, others in fist',
+            'J': 'J - I with circular motion',
+            'K': 'K - Index and middle up, thumb between',
+            'L': 'L - Index and thumb extended',
+            'M': 'M - Three fingers down on palm',
+            'N': 'N - Two fingers down on palm',
+            'O': 'O - All fingers curled touching thumb',
+            'P': 'P - Index down, thumb up',
+            'Q': 'Q - Pointing finger down, thumb out',
+            'R': 'R - Crossed middle over index',
+            'S': 'S - Fist with thumb over fingers',
+            'T': 'T - Fist with thumb between index and middle',
+            'U': 'U - Index and middle up together',
+            'V': 'V - Index and middle apart (peace sign)',
+            'W': 'W - Three fingers up (thumb, index, middle)',
+            'X': 'X - Index finger bent',
+            'Y': 'Y - Thumb and pinky out',
+            'Z': 'Z - Draw a Z in the air'
+        };
+
+        // Initialize the application
+        async function init() {
+            try {
+                // Load hand detection model
+                status.textContent = 'Loading hand detection model...';
+                detector = await handPoseDetection.createDetector(
+                    handPoseDetection.SupportedModels.MediaPipeHands,
+                    {
+                        runtime: 'mediapipe',
+                        modelType: 'full',
+                        maxHands: 1,
+                        solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'
+                    }
+                );
+
+                // Initialize KNN classifier
+                classifier = knnClassifier.create();
+                
+                // Load pre-trained model data if available
+                const savedModel = localStorage.getItem('aslClassifier');
+                if (savedModel) {
+                    const tensorData = JSON.parse(savedModel);
+                    const tensors = {};
+                    Object.keys(tensorData).forEach(key => {
+                        tensors[key] = tf.tensor(tensorData[key].data, tensorData[key].shape);
+                    });
+                    classifier.setClassifierDataset(tensors);
+                }
+
+                status.textContent = 'Models loaded successfully!';
+                status.className = 'status success';
+                
+                // Enable buttons
+                startBtn.disabled = false;
+                trainBtn.disabled = false;
+                resetBtn.disabled = false;
+                
+                // Event listeners
+                startBtn.addEventListener('click', toggleCamera);
+                clearBtn.addEventListener('click', clearOutput);
+                saveBtn.addEventListener('click', saveWord);
+                trainBtn.addEventListener('click', toggleTraining);
+                captureBtn.addEventListener('click', captureSample);
+                resetBtn.addEventListener('click', resetModel);
+                modeSelect.addEventListener('change', updateDetectionMode);
+                confidenceSlider.addEventListener('input', updateConfidenceThreshold);
+                
+                console.log('Application initialized successfully');
+            } catch (error) {
+                console.error('Initialization error:', error);
+                status.textContent = 'Error loading models. Please refresh the page.';
+                status.className = 'status error';
+            }
+        }
+
+        // Toggle camera on/off
+        async function toggleCamera() {
+            if (isRunning) {
+                stopCamera();
+                startBtn.textContent = 'Start Camera';
+                clearBtn.disabled = true;
+                saveBtn.disabled = true;
+            } else {
+                await startCamera();
+                startBtn.textContent = 'Stop Camera';
+                clearBtn.disabled = false;
+                saveBtn.disabled = modeSelect.value === 'letters';
+            }
+            isRunning = !isRunning;
+        }
+
+        // Start camera
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: 640,
+                        height: 480,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+                video.srcObject = stream;
+                
+                // Start detection loop
+                lastFpsUpdate = performance.now();
+                frameCount = 0;
+                detectHands();
+            } catch (error) {
+                console.error('Camera error:', error);
+                status.textContent = 'Could not access camera. Please ensure permissions are granted.';
+                status.className = 'status error';
+            }
+        }
+
+        // Stop camera
+        function stopCamera() {
+            const stream = video.srcObject;
+            if (stream) {
+                const tracks = stream.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            cancelAnimationFrame(animationFrame);
+        }
+
+        // Main detection loop
+        async function detectHands() {
+            if (!isRunning) return;
+            
+            const startTime = performance.now();
+            
+            try {
+                // Get hand predictions
+                const hands = await detector.estimateHands(video, {
+                    flipHorizontal: false
+                });
+                
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Update FPS counter
+                frameCount++;
+                const now = performance.now();
+                if (now - lastFpsUpdate >= 1000) {
+                    fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+                    fpsCounter.textContent = fps;
+                    frameCount = 0;
+                    lastFpsUpdate = now;
+                }
+
+                if (hands.length > 0) {
+                    const hand = hands[0];
+                    landmarkCount.textContent = hand.keypoints.length;
+                    
+                    // Draw landmarks
+                    drawLandmarks(hand.keypoints);
+                    
+                    // Classify the sign
+                    const result = await classifyHand(hand);
+                    
+                    if (result) {
+                        updateOutput(result.label, result.confidence);
+                    }
+                } else {
+                    landmarkCount.textContent = '0';
+                }
+                
+                // Continue loop
+                animationFrame = requestAnimationFrame(detectHands);
+                
+                // Calculate processing time
+                const detectTime = performance.now() - startTime;
+                if (detectTime > 100) {
+                    console.warn(`Detection took ${detectTime.toFixed(1)}ms`);
+                }
+            } catch (error) {
+                console.error('Detection error:', error);
+                animationFrame = requestAnimationFrame(detectHands);
+            }
+        }
+
+        // Draw hand landmarks
+        function drawLandmarks(keypoints) {
+            if (!keypoints || keypoints.length < 21) return;
+            
+            // Draw connections first (so they appear under landmarks)
+            const connections = handPoseDetection.util.keypointsConnections;
+            ctx.strokeStyle = '#00FF00';
+            ctx.lineWidth = 2;
+            
+            for (const connection of connections) {
+                const [startIdx, endIdx] = connection;
+                const start = keypoints[startIdx];
+                const end = keypoints[endIdx];
+                
+                if (start && end) {
+                    ctx.beginPath();
+                    ctx.moveTo(start.x, start.y);
+                    ctx.lineTo(end.x, end.y);
+                    ctx.stroke();
+                }
+            }
+            
+            // Draw landmarks
+            ctx.fillStyle = '#FF0000';
+            for (const keypoint of keypoints) {
+                if (keypoint.score > confidenceThreshold) {
+                    ctx.beginPath();
+                    ctx.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            }
+            
+            // Draw palm base
+            const palmBase = keypoints[0];
+            if (palmBase) {
+                ctx.fillStyle = '#0000FF';
+                ctx.beginPath();
+                ctx.arc(palmBase.x, palmBase.y, 6, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        }
+
+        // Classify hand pose
+        async function classifyHand(hand) {
+            if (!hand || hand.keypoints.length < 21) return null;
+            
+            // Extract normalized landmark positions (relative to palm base)
+            const palmBase = hand.keypoints[0];
+            const landmarks = hand.keypoints.map(kp => {
+                return {
+                    x: (kp.x - palmBase.x) / canvas.width,
+                    y: (kp.y - palmBase.y) / canvas.height,
+                    z: kp.z || 0
+                };
+            });
+            
+            // Flatten landmarks into a feature vector
+            const features = [];
+            for (let i = 1; i < landmarks.length; i++) { // Skip palm base (0)
+                features.push(landmarks[i].x, landmarks[i].y, landmarks[i].z);
+            }
+            
+            // Create tensor from features
+            const inputTensor = tf.tensor2d([features]);
+            
+            // Classify using KNN
+            if (classifier.getNumClasses() > 0) {
+                const result = await classifier.predictClass(inputTensor);
+                inputTensor.dispose();
+                
+                if (result.confidences[result.label] >= confidenceThreshold) {
+                    return {
+                        label: result.label,
+                        confidence: result.confidences[result.label]
+                    };
+                }
+            }
+            
+            // Fallback to heuristic classification if no trained model
+            return heuristicClassification(hand.keypoints);
+        }
+
+        // Heuristic classification (fallback)
+        function heuristicClassification(keypoints) {
+            // Simplified version - in a real app you'd want more sophisticated rules
+            const fingerTips = [4, 8, 12, 16, 20]; // thumb to pinky
+            const fingerJoints = [3, 7, 11, 15, 19]; // base of each finger
+            const palmBase = keypoints[0];
+            
+            // Calculate extended fingers
+            let extended = [];
+            for (let i = 0; i < fingerTips.length; i++) {
+                const tip = keypoints[fingerTips[i]];
+                const joint = keypoints[fingerJoints[i]];
+                const tipDist = distance(tip, palmBase);
+                const jointDist = distance(joint, palmBase);
+                extended.push(tipDist > jointDist * 1.1);
+            }
+            
+            // Basic letter recognition
+            if (!extended[1] && !extended[2] && !extended[3] && !extended[4]) {
+                return { label: 'A', confidence: 0.9 };
+            } else if (extended[1] && extended[2] && extended[3] && extended[4]) {
+                return { label: 'B', confidence: 0.9 };
+            } else if (!extended[1] && extended[2] && !extended[3] && !extended[4]) {
+                return { label: 'C', confidence: 0.85 };
+            } else if (extended[1] && !extended[2] && !extended[3] && !extended[4]) {
+                return { label: 'D', confidence: 0.85 };
+            }
+            
+            return null;
+        }
+
+        // Update output display
+        function updateOutput(letter, confidence) {
+            if (letter !== lastDetection) {
+                lastDetection = letter;
+                
+                if (modeSelect.value === 'letters') {
+                    output.innerHTML = `Detected: <strong>${letter}</strong> (${(confidence * 100).toFixed(0)}% confidence)<br>
+                                       <small>${ASL_ALPHABET[letter] || ''}</small>`;
+                } else {
+                    // Word mode - accumulate letters
+                    currentWord += letter;
+                    output.innerHTML = `Current word: <strong>${currentWord}</strong>`;
+                    
+                    // Clear after delay
+                    clearTimeout(wordTimeout);
+                    wordTimeout = setTimeout(() => {
+                        if (currentWord.length > 1) {
+                            addToHistory(currentWord);
+                        }
+                        currentWord = '';
+                    }, 2000);
+                }
+            }
+        }
+        let wordTimeout;
+
+        // Add word to history
+        function addToHistory(word) {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString();
+            const historyItem = document.createElement('div');
+            historyItem.textContent = `${timeString}: ${word}`;
+            history.prepend(historyItem);
+            
+            // Keep history manageable
+            if (history.children.length > 10) {
+                history.removeChild(history.lastChild);
+            }
+        }
+
+        // Clear output
+        function clearOutput() {
+            output.textContent = 'Detected letters will appear here';
+            lastDetection = '';
+            currentWord = '';
+        }
+
+        // Save current word
+        function saveWord() {
+            if (currentWord) {
+                addToHistory(currentWord);
+                currentWord = '';
+                output.textContent = 'Word saved to history';
+            }
+        }
+
+        // Toggle training mode
+        function toggleTraining() {
+            if (trainingControls.style.display === 'none') {
+                trainingControls.style.display = 'block';
+                trainBtn.textContent = 'Cancel Training';
+                trainBtn.className = 'button-danger';
+            } else {
+                trainingControls.style.display = 'none';
+                trainBtn.textContent = 'Train New Sign';
+                trainBtn.className = '';
+                signName.value = '';
+            }
+        }
+
+        // Capture training sample
+        async function captureSample() {
+            const className = signName.value.trim().toUpperCase();
+            if (!className || !isRunning) return;
+            
+            try {
+                const hands = await detector.estimateHands(video, {
+                    flipHorizontal: false
+                });
+                
+                if (hands.length > 0) {
+                    const hand = hands[0];
+                    
+                    // Process landmarks
+                    const palmBase = hand.keypoints[0];
+                    const landmarks = hand.keypoints.map(kp => {
+                        return {
+                            x: (kp.x - palmBase.x) / canvas.width,
+                            y: (kp.y - palmBase.y) / canvas.height,
+                            z: kp.z || 0
+                        };
+                    });
+                    
+                    // Flatten landmarks
+                    const features = [];
+                    for (let i = 1; i < landmarks.length; i++) {
+                        features.push(landmarks[i].x, landmarks[i].y, landmarks[i].z);
+                    }
+                    
+                    // Add to training samples
+                    if (!trainingSamples[className]) {
+                        trainingSamples[className] = [];
+                    }
+                    trainingSamples[className].push(features);
+                    
+                    // Update UI
+                    sampleCount.textContent = `Samples: ${trainingSamples[className].length}`;
+                    status.textContent = `Captured sample for ${className}`;
+                    status.className = 'status success';
+                    
+                    // Train classifier if we have enough samples
+                    if (trainingSamples[className].length >= 5) {
+                        await trainClassifier();
+                    }
+                }
+            } catch (error) {
+                console.error('Capture error:', error);
+                status.textContent = 'Error capturing sample';
+                status.className = 'status error';
+            }
+        }
+
+        // Train classifier with captured samples
+        async function trainClassifier() {
+            status.textContent = 'Training model...';
+            status.className = 'status loading';
+            
+            try {
+                // Convert samples to tensors
+                const classTensors = {};
+                
+                for (const className in trainingSamples) {
+                    if (trainingSamples[className].length >= 3) { // Minimum 3 samples per class
+                        classTensors[className] = tf.tensor2d(trainingSamples[className]);
+                    }
+                }
+                
+                // Add to classifier
+                for (const className in classTensors) {
+                    classifier.addExample(classTensors[className], className);
+                    classTensors[className].dispose();
+                }
+                
+                // Save model to localStorage
+                const dataset = classifier.getClassifierDataset();
+                const datasetObj = {};
+                
+                await Promise.all(Object.keys(dataset).map(async key => {
+                    const tensor = dataset[key];
+                    const data = await tensor.data();
+                    datasetObj[key] = {
+                        data: Array.from(data),
+                        shape: tensor.shape
+                    };
+                }));
+                
+                localStorage.setItem('aslClassifier', JSON.stringify(datasetObj));
+                
+                status.textContent = 'Model trained successfully!';
+                status.className = 'status success';
+                trainingSamples = {};
+                sampleCount.textContent = 'Samples: 0';
+            } catch (error) {
+                console.error('Training error:', error);
+                status.textContent = 'Error training model';
+                status.className = 'status error';
+            }
+        }
+
+        // Reset model
+        function resetModel() {
+            if (confirm('Are you sure you want to reset the trained model? This cannot be undone.')) {
+                classifier.clearAllClasses();
+                localStorage.removeItem('aslClassifier');
+                status.textContent = 'Model has been reset';
+                status.className = 'status success';
+            }
+        }
+
+        // Update detection mode
+        function updateDetectionMode() {
+            saveBtn.disabled = modeSelect.value === 'letters';
+            clearOutput();
+        }
+
+        // Update confidence threshold
+        function updateConfidenceThreshold() {
+            confidenceThreshold = parseFloat(confidenceSlider.value);
+            confidenceValue.textContent = confidenceThreshold;
+        }
+
+        // Helper function to calculate distance between points
+        function distance(point1, point2) {
+            return Math.sqrt(
+                Math.pow(point1.x - point2.x, 2) + 
+                Math.pow(point1.y - point2.y, 2)
+            );
+        }
+
+        // Initialize when page loads
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
